@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # scenario.json is the single source of truth for the problems, their points,
       # and their pinned test counts. check.sh parses it with sed, which is only safe
@@ -104,7 +104,7 @@ jobs:
           done < <(jq -r '.categories[].path' scenario.json)
           exit $problems
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -243,7 +243,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # A broken devcontainer fails silently in Codespaces, which falls back to a
       # recovery container instead of surfacing the error. Build it here so a bad
