@@ -12,7 +12,7 @@ jobs:
   grade:
     name: Score submission
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Check out the submission
@@ -96,7 +96,9 @@ jobs:
               # whole job into its time limit and costing every other problem its score.
               ( cd "${GITHUB_WORKSPACE}/${dir}" && timeout 120 python -m pytest -m "not guard" --junitxml="$scored_report" < /dev/null ) \
                 && scored_exit=0 || scored_exit=$?
-              if [ "$guards" -gt 0 ]; then
+              # No guard run when the scored run could not run: the result is already
+              # `error`, and a problem that hangs at import would hang here a second time.
+              if [ "$guards" -gt 0 ] && ran "$scored_exit"; then
                 ( cd "${GITHUB_WORKSPACE}/${dir}" && timeout 120 python -m pytest -m guard --junitxml="$guard_report" < /dev/null ) \
                   && guard_exit=0 || guard_exit=$?
               fi
@@ -118,6 +120,8 @@ jobs:
               errors=$(attr "$scored_report" errors)
               executed=$(( ${collected:-0} - ${skipped:-0} ))
               passed=$(( ${collected:-0} - ${failures:-0} - ${errors:-0} - ${skipped:-0} ))
+              # A test that fails and then errors in teardown is counted in both.
+              if [ "$passed" -lt 0 ]; then passed=0; fi
 
               guard_collected=0
               guard_skipped=0
@@ -127,6 +131,7 @@ jobs:
                 guard_failures=$(attr "$guard_report" failures)
                 guard_errors=$(attr "$guard_report" errors)
                 guard_passed=$(( ${guard_collected:-0} - ${guard_failures:-0} - ${guard_errors:-0} - ${guard_skipped:-0} ))
+                if [ "$guard_passed" -lt 0 ]; then guard_passed=0; fi
               fi
 
               # Whole-number points, rounded down.

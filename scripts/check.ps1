@@ -33,10 +33,11 @@ function Read-Suite {
     if (-not $suite) { return $null }
     $collected = [int]$suite.tests
     $skipped = [int]$suite.skipped
+    # A test that fails and then errors in teardown is counted in both; never below 0.
     return [pscustomobject]@{
         Collected = $collected
         Skipped   = $skipped
-        Passed    = $collected - [int]$suite.failures - [int]$suite.errors - $skipped
+        Passed    = [math]::Max(0, $collected - [int]$suite.failures - [int]$suite.errors - $skipped)
     }
 }
 

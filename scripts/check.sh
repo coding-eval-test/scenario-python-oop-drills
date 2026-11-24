@@ -104,6 +104,8 @@ for i in "${!ids[@]}"; do
     failures=$(attr "$scored_report" failures)
     errors=$(attr "$scored_report" errors)
     passed=$(( ${collected:-0} - ${failures:-0} - ${errors:-0} - ${skipped:-0} ))
+    # A test that fails and then errors in teardown is counted in both.
+    if [ "$passed" -lt 0 ]; then passed=0; fi
 
     guard_collected=0
     guard_skipped=0
@@ -114,6 +116,7 @@ for i in "${!ids[@]}"; do
       guard_failures=$(attr "$guard_report" failures)
       guard_errors=$(attr "$guard_report" errors)
       guard_passed=$(( ${guard_collected:-0} - ${guard_failures:-0} - ${guard_errors:-0} - ${guard_skipped:-0} ))
+      if [ "$guard_passed" -lt 0 ]; then guard_passed=0; fi
     fi
 
     # Whole-number points, rounded down.
