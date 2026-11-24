@@ -1,0 +1,201 @@
+name: Grade
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  grade:
+    name: Score submission
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the submission
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # A problem earns floor(points x passed / tests): partial credit, per problem.
+      # The job always exits 0: a partial score is work in progress, not a broken build.
+      #
+      # Problems, their points, their folders, and how many tests each one ships all
+      # come from scenario.json. The test counts are pinned there on purpose: with
+      # partial credit, deleting a failing test would otherwise raise the score, so
+      # the denominator is never what pytest happened to find.
+      #
+      # Each problem is its own pytest project, run from inside its own folder. A
+      # syntax error in one problem is that problem's error and nobody else's.
+      #
+      # The exit code only tells "ran" from "did not run": 0, 1 and 5 are runs, and
+      # anything else (2 is a collection or import error) is an error. Everything
+      # past that comes from the report's counts.
+      - name: Score every problem
+        id: score
+        shell: bash
+        run: |
+          total=0
+          max=0
+          json_items=""
+          reports="${GITHUB_WORKSPACE}/reports"
+
+          # One attribute of the report's <testsuite ...> tag. The trailing space in
+          # the anchor keeps the <testsuites> wrapper from ever being the matched line.
+          attr() { sed -n "s/.*<testsuite [^>]*$2=\"\([0-9]*\)\".*/\1/p" "$1" | head -1; }
+          ran() { [ "$1" -eq 0 ] || [ "$1" -eq 1 ] || [ "$1" -eq 5 ]; }
+
+          {
+            echo "## Scorecard"
+            echo ""
+            echo "| Problem | Result | Tests | Points |"
+            echo "| --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS=$'\t' read -r category worth label dir pinned guards; do
+            max=$((max + worth))
+            rm -rf "$reports"
+            mkdir -p "$reports"
+
+            result=""
+            reason=""
+            earned=0
+            passed=0
+            executed=0
+            guard_passed=0
+            scored_exit=0
+            guard_exit=0
+            scored_report="${reports}/${category}.xml"
+            guard_report="${reports}/${category}-guard.xml"
+
+            echo "::group::${category} — ${label}"
+            if [ "$pinned" -lt 1 ]; then
+              result="error"
+              reason="scenario.json pins ${pinned} tests for it; the count must be at least 1"
+            elif [ ! -d "${GITHUB_WORKSPACE}/${dir}" ]; then
+              result="error"
+              reason="its folder ${dir} is missing"
+            else
+              # In a subshell so the working directory is back at the root afterwards.
+              # stdin is redirected: a tool reading stdin would otherwise eat the rest
+              # of the manifest off this loop and only the first problem would score.
+              # `&& x=0 || x=$?` because this step runs under `bash -e`: a bare failing
+              # command would end the step at the first red problem.
+              # `timeout 120`: a problem that hangs (an infinite loop at import, say) is
+              # cut off with exit 124 and scores as its own error instead of running the
+              # whole job into its time limit and costing every other problem its score.
+              ( cd "${GITHUB_WORKSPACE}/${dir}" && timeout 120 python -m pytest -m "not guard" --junitxml="$scored_report" < /dev/null ) \
+                && scored_exit=0 || scored_exit=$?
+              if [ "$guards" -gt 0 ]; then
+                ( cd "${GITHUB_WORKSPACE}/${dir}" && timeout 120 python -m pytest -m guard --junitxml="$guard_report" < /dev/null ) \
+                  && guard_exit=0 || guard_exit=$?
+              fi
+
+              if ! ran "$scored_exit" || ! ran "$guard_exit"; then
+                result="error"
+                reason="pytest could not run it (exit ${scored_exit}/${guard_exit}) — 2 is usually a syntax or import error in that folder, 124 means it ran past the 2-minute limit"
+              elif [ ! -e "$scored_report" ] || { [ "$guards" -gt 0 ] && [ ! -e "$guard_report" ]; }; then
+                result="error"
+                reason="pytest wrote no report for it"
+              fi
+            fi
+            echo "::endgroup::"
+
+            if [ -z "$result" ]; then
+              collected=$(attr "$scored_report" tests)
+              skipped=$(attr "$scored_report" skipped)
+              failures=$(attr "$scored_report" failures)
+              errors=$(attr "$scored_report" errors)
+              executed=$(( ${collected:-0} - ${skipped:-0} ))
+              passed=$(( ${collected:-0} - ${failures:-0} - ${errors:-0} - ${skipped:-0} ))
+
+              guard_collected=0
+              guard_skipped=0
+              if [ "$guards" -gt 0 ]; then
+                guard_collected=$(attr "$guard_report" tests)
+                guard_skipped=$(attr "$guard_report" skipped)
+                guard_failures=$(attr "$guard_report" failures)
+                guard_errors=$(attr "$guard_report" errors)
+                guard_passed=$(( ${guard_collected:-0} - ${guard_failures:-0} - ${guard_errors:-0} - ${guard_skipped:-0} ))
+              fi
+
+              # Whole-number points, rounded down.
+              base=$(( worth * passed / pinned ))
+
+              # Order matters: the first matching row wins. tampered compares the
+              # COLLECTED count, skipped tests included, so a skipped test is reported
+              # as skipped and not as a deleted one.
+              if [ "${collected:-0}" -ne "$pinned" ] || [ "${guard_collected:-0}" -ne "$guards" ]; then
+                result="tampered"
+                reason="it ships ${pinned} scored and ${guards} existing-behavior tests, but ${collected:-0} and ${guard_collected:-0} were found. Restore its tests/ folder"
+              elif [ "${skipped:-0}" -gt 0 ] || [ "${guard_skipped:-0}" -gt 0 ]; then
+                result="skipped"
+                reason="it has skipped tests. A problem with any skipped test scores 0"
+              elif [ "$guard_passed" -ne "$guards" ]; then
+                result="guard-broken"
+                earned=$(( base / 2 ))
+                reason="$(( guards - guard_passed )) existing-behavior test(s) fail, so it earns half: ${earned} instead of ${base}"
+              elif [ "$passed" -eq "$pinned" ]; then
+                result="pass"
+                earned="$worth"
+              elif [ "$passed" -gt 0 ]; then
+                result="partial"
+                earned="$base"
+              else
+                result="fail"
+              fi
+            fi
+
+            if [ -n "$reason" ]; then
+              echo "::warning::${category}: ${reason}."
+            fi
+
+            total=$((total + earned))
+            icon=$(printf '%s' "$result" | tr '[:lower:]' '[:upper:]')
+            echo "| ${label} | ${icon} | ${passed} / ${pinned} | ${earned} / ${worth} |" >> "$GITHUB_STEP_SUMMARY"
+
+            if [ -n "$json_items" ]; then
+              json_items="${json_items},"
+            fi
+            json_items="${json_items}{\"category\":\"${category}\",\"label\":\"${label}\",\"result\":\"${result}\",\"tests\":${executed},\"passed\":${passed},\"guards\":${guards},\"guardsPassed\":${guard_passed},\"earned\":${earned},\"possible\":${worth}}"
+          done < <(jq -r '.categories[] | [.category, .points, .label, .path, .tests, (.guards // 0)] | @tsv' scenario.json)
+
+          rm -rf "$reports"
+
+          {
+            echo "| **Total** | | | **${total} / ${max}** |"
+            echo ""
+            echo "Partial credit is rounded down per problem. Run \`./scripts/check.sh\` (or \`./scripts/check.ps1\`) locally for the same split."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          cat > score.json <<JSON
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "sha": "${GITHUB_SHA}",
+            "runId": "${GITHUB_RUN_ID}",
+            "total": ${total},
+            "possible": ${max},
+            "items": [${json_items}]
+          }
+          JSON
+
+          echo "total=${total}" >> "$GITHUB_OUTPUT"
+          echo "possible=${max}" >> "$GITHUB_OUTPUT"
+          echo "Scored ${total}/${max}."
+
+      - name: Upload score.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: score
+          path: score.json
+          if-no-files-found: error

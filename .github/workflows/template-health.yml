@@ -1,0 +1,250 @@
+name: Template health
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-shipping-state:
+    name: Verify the template ships in the intended state
+    # Template copies inherit this workflow. Only run it in the source repository.
+    if: github.repository == 'coding-eval-test/scenario-python-oop-drills'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # scenario.json is the single source of truth for the problems, their points,
+      # and their pinned test counts. check.sh parses it with sed, which is only safe
+      # while the file stays in jq's canonical one-key-per-line shape — so assert
+      # that first.
+      - name: scenario.json must be canonically formatted
+        shell: bash
+        run: |
+          if ! diff <(jq --indent 2 . scenario.json) scenario.json; then
+            echo "::error::scenario.json is not canonically formatted. Run: jq --indent 2 . scenario.json | sponge scenario.json"
+            exit 1
+          fi
+          echo "scenario.json is canonical."
+
+      - name: scenario.json must name this repository
+        shell: bash
+        run: |
+          declared=$(jq -r '.templateRepo' scenario.json)
+          if [ "$declared" != "${GITHUB_REPOSITORY}" ]; then
+            echo "::error::scenario.json templateRepo is '${declared}' but this repo is '${GITHUB_REPOSITORY}'."
+            echo "::error::The job guard above is keyed off the same slug — fix both together."
+            exit 1
+          fi
+          echo "templateRepo matches ${GITHUB_REPOSITORY}."
+
+      - name: Every problem must be fully described in scenario.json
+        shell: bash
+        run: |
+          bad=$(jq -r '.categories[]
+            | select((.path | type) != "string" or (.tests | type) != "number" or .tests < 1
+                     or (.guards | type) != "number" or .guards < 0)
+            | .category' scenario.json)
+          if [ -n "$bad" ]; then
+            echo "::error::These problems need a path, tests >= 1 and guards >= 0 in scenario.json: ${bad}"
+            exit 1
+          fi
+          sum=$(jq '[.categories[].points] | add' scenario.json)
+          if [ "$sum" -ne 100 ]; then
+            echo "::error::Problem points sum to ${sum}, not 100."
+            exit 1
+          fi
+          echo "Every problem has a path and pinned counts; points sum to 100."
+
+      - name: README grading table must match scenario.json
+        shell: bash
+        run: |
+          {
+            echo "| Problem | Points |"
+            echo "| --- | --- |"
+            jq -r '.categories[] | "| \(.label) | \(.points) |"' scenario.json
+          } > /tmp/expected-table.md
+
+          sed -n '/<!-- grading-table:start -->/,/<!-- grading-table:end -->/p' README.md \
+            | sed '1d;$d' > /tmp/actual-table.md
+
+          if ! diff /tmp/expected-table.md /tmp/actual-table.md; then
+            echo "::error::The README grading table does not match scenario.json. Left is expected."
+            exit 1
+          fi
+          echo "README grading table matches scenario.json."
+
+      # Every problem carries its own pytest.ini, and the kit depends on them all
+      # behaving the same way.
+      - name: Every problem must ship the same pytest.ini and a PROBLEM.md
+        shell: bash
+        run: |
+          problems=0
+          first=""
+          while read -r dir; do
+            if [ ! -f "${dir}/PROBLEM.md" ]; then
+              echo "::error::${dir} has no PROBLEM.md."
+              problems=1
+            fi
+            if [ ! -f "${dir}/pytest.ini" ]; then
+              echo "::error::${dir} has no pytest.ini."
+              problems=1
+            elif [ -z "$first" ]; then
+              first="${dir}/pytest.ini"
+            elif ! cmp -s "$first" "${dir}/pytest.ini"; then
+              echo "::error::${dir}/pytest.ini differs from ${first}. They must be byte-identical."
+              problems=1
+            fi
+          done < <(jq -r '.categories[].path' scenario.json)
+          exit $problems
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # The shipping state of a problem set: every scored test red, every
+      # existing-behavior test green, exactly the pinned number of each, none
+      # skipped, and nothing failing to import. A scored test that passes here hands
+      # out points for doing nothing; a count that disagrees with scenario.json makes
+      # every trainee copy score `tampered` on its first push.
+      - name: Every problem must ship red where it scores and green where it guards
+        shell: bash
+        run: |
+          attr() { sed -n "s/.*<testsuite [^>]*$2=\"\([0-9]*\)\".*/\1/p" "$1" | head -1; }
+          reports="${GITHUB_WORKSPACE}/reports"
+          problems=0
+
+          while IFS=$'\t' read -r category dir pinned guards; do
+            rm -rf "$reports"
+            mkdir -p "$reports"
+
+            ( cd "${GITHUB_WORKSPACE}/${dir}" && python -m pytest -m "not guard" \
+                --junitxml="${reports}/scored.xml" < /dev/null > /dev/null 2>&1 ) \
+              && scored_exit=0 || scored_exit=$?
+
+            # Exit 1 is the only healthy answer: tests ran and failed. 0 means
+            # something passed everything, 2 means the problem does not import.
+            if [ "$scored_exit" -ne 1 ]; then
+              echo "::error::${category}: the scored run exited ${scored_exit}, expected 1 (ran, and failed). 2 is an import or collection error — a missing stub, usually."
+              problems=1
+              continue
+            fi
+
+            collected=$(attr "${reports}/scored.xml" tests)
+            skipped=$(attr "${reports}/scored.xml" skipped)
+            failures=$(attr "${reports}/scored.xml" failures)
+            errors=$(attr "${reports}/scored.xml" errors)
+            passed=$(( ${collected:-0} - ${failures:-0} - ${errors:-0} - ${skipped:-0} ))
+
+            if [ "${collected:-0}" -ne "$pinned" ]; then
+              echo "::error::${category}: scenario.json pins ${pinned} scored tests but ${collected:-0} were collected."
+              problems=1
+            elif [ "${skipped:-0}" -gt 0 ]; then
+              echo "::error::${category}: ships with ${skipped} skipped scored test(s)."
+              problems=1
+            elif [ "$passed" -ne 0 ]; then
+              echo "::error::${category}: ${passed} scored test(s) PASS in the template. Behavior that already works belongs in a guard test."
+              problems=1
+            else
+              echo "${category}: ${collected} scored tests, all failing as intended."
+            fi
+
+            if [ "$guards" -gt 0 ]; then
+              ( cd "${GITHUB_WORKSPACE}/${dir}" && python -m pytest -m guard \
+                  --junitxml="${reports}/guard.xml" < /dev/null > /dev/null 2>&1 ) \
+                && guard_exit=0 || guard_exit=$?
+
+              # Read the report only after a clean exit: under `bash -e` a sed on a
+              # report that was never written would end the step mid-loop.
+              guard_collected=0
+              guard_skipped=0
+              if [ "$guard_exit" -eq 0 ]; then
+                guard_collected=$(attr "${reports}/guard.xml" tests)
+                guard_skipped=$(attr "${reports}/guard.xml" skipped)
+              fi
+
+              if [ "$guard_exit" -ne 0 ]; then
+                echo "::error::${category}: the guard run exited ${guard_exit}. Every existing-behavior test must pass in the template."
+                problems=1
+              elif [ "${guard_collected:-0}" -ne "$guards" ]; then
+                echo "::error::${category}: scenario.json pins ${guards} guard tests but ${guard_collected:-0} were collected."
+                problems=1
+              elif [ "${guard_skipped:-0}" -gt 0 ]; then
+                echo "::error::${category}: ships with ${guard_skipped} skipped guard test(s)."
+                problems=1
+              else
+                echo "${category}: ${guard_collected} guard tests, all passing."
+              fi
+            fi
+          done < <(jq -r '.categories[] | [.category, .path, .tests, .guards] | @tsv' scenario.json)
+          exit $problems
+
+      # Derived from the code rather than hardcoded, so a new problem set inherits
+      # the check for free: every def/class name declared under projectPath (private
+      # _names excluded) must stay out of the trainee-facing docs unless
+      # docsAllowList exempts it. A problem statement has to name the API it asks
+      # for, so that list is long here — what this still catches is a statement
+      # naming something the trainee was never meant to be handed. The
+      # approach-specific half of this lives in the private solution repo, because
+      # naming it here would leak it: this file is public.
+      - name: Docs must not leak the solution
+        shell: bash
+        run: |
+          mapfile -t allow < <(jq -r '.docsAllowList // [] | .[]' scenario.json)
+
+          srcdir=$(jq -r '.projectPath' scenario.json)
+          if [ ! -d "$srcdir" ]; then
+            echo "::error::projectPath '${srcdir}' does not exist — the leak check is not actually checking anything."
+            exit 1
+          fi
+
+          names=$(grep -rhoE '^[[:space:]]*(def|class)[[:space:]]+[A-Za-z0-9_]+' \
+                    --include='*.py' "$srcdir" \
+                  | awk '{print $NF}' | grep -v '^_' | sort -u)
+
+          for entry in "${allow[@]}"; do
+            names=$(printf '%s\n' "$names" | grep -vxF "$entry" || true)
+          done
+
+          if [ -z "$names" ]; then
+            echo "::error::No names left after the allow list — the leak check is not actually checking anything."
+            exit 1
+          fi
+
+          pattern=$(printf '%s\n' "$names" | paste -sd '|' -)
+          echo "Checking trainee-facing docs against: ${pattern}"
+
+          if grep -nwE "$pattern" README.md "$srcdir"/*/PROBLEM.md; then
+            echo "::error::Implementation detail leaked into trainee-facing docs."
+            echo "::error::If a name legitimately belongs in a statement, add it to docsAllowList in scenario.json."
+            exit 1
+          fi
+          echo "No solution leakage detected."
+
+  devcontainer-build:
+    name: Devcontainer must build
+    # Template copies inherit this workflow. Only run it in the source repository.
+    if: github.repository == 'coding-eval-test/scenario-python-oop-drills'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A broken devcontainer fails silently in Codespaces, which falls back to a
+      # recovery container instead of surfacing the error. Build it here so a bad
+      # devcontainer.json fails the push.
+      - name: Devcontainer must build
+        uses: devcontainers/ci@v0.3
+        with:
+          push: never
