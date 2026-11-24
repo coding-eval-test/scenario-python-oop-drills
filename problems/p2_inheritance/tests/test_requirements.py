@@ -59,6 +59,9 @@ def test_shared_send_validates_and_counts():
     with pytest.raises(ValueError):
         notifier.send("", "three")
     assert notifier.sent_count == 2
+    with pytest.raises(ValueError):
+        notifier.send("+15550100", "")
+    assert notifier.sent_count == 2
 
 
 def test_urgent_notifier_builds_on_the_email_notifier():

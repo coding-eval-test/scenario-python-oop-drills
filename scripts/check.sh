@@ -17,24 +17,29 @@ fi
 text() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$manifest"; }
 number() { sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" "$manifest"; }
 
-mapfile -t ids < <(text category)
-mapfile -t paths < <(text path)
-mapfile -t worths < <(number points)
-mapfile -t pins < <(number tests)
-mapfile -t guard_pins < <(number guards)
+# Filled with read loops rather than mapfile, and checked without namerefs, so
+# this also runs on the bash 3.2 that ships with macOS.
+ids=()
+paths=()
+worths=()
+pins=()
+guard_pins=()
+while IFS= read -r value; do ids+=("$value"); done < <(text category)
+while IFS= read -r value; do paths+=("$value"); done < <(text path)
+while IFS= read -r value; do worths+=("$value"); done < <(number points)
+while IFS= read -r value; do pins+=("$value"); done < <(number tests)
+while IFS= read -r value; do guard_pins+=("$value"); done < <(number guards)
 
 count=${#ids[@]}
 if [ "$count" -eq 0 ]; then
   echo "No problems found in ${manifest}. Expected \"category\" entries — is the file valid JSON?"
   exit 1
 fi
-for list in paths worths pins guard_pins; do
-  declare -n values="$list"
-  if [ "${#values[@]}" -ne "$count" ]; then
-    echo "scenario.json is malformed: ${count} problems but ${#values[@]} '${list}' values."
+for pair in "path:${#paths[@]}" "points:${#worths[@]}" "tests:${#pins[@]}" "guards:${#guard_pins[@]}"; do
+  if [ "${pair#*:}" -ne "$count" ]; then
+    echo "scenario.json is malformed: ${count} problems but ${pair#*:} \"${pair%%:*}\" values."
     exit 1
   fi
-  unset -n values
 done
 
 # One attribute of the report's <testsuite ...> tag. The trailing space in the

@@ -37,6 +37,9 @@ def test_overdrawing_is_rejected_and_the_balance_kept():
     with pytest.raises(InvalidBalanceError):
         account.withdraw(500)
     assert account.balance == 100
+    with pytest.raises(InvalidBalanceError):
+        account.deposit(-500)
+    assert account.balance == 100
 
 
 def test_account_id_is_read_only():

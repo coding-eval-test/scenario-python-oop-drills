@@ -13,9 +13,10 @@ e-mails too, and does not want that logic copied into every new class.
 
 1. `Notifier` is the shared base class. It is built with `(sender_name, outbox)` and
    keeps `sender_name`, `outbox`, and a `sent_count` that starts at 0.
-2. `Notifier` cannot be used on its own: creating one raises `TypeError`, and so does
-   creating any subclass that does not supply `format(message)`. `format` is the one
-   thing every channel must supply — it returns the text that channel delivers.
+2. `Notifier` is an abstract base class. It cannot be used on its own: creating one
+   raises `TypeError`, and so does creating any subclass that does not supply
+   `format(message)`. `format` is its one abstract method — the one thing every channel
+   must supply — and it returns the text that channel delivers.
 3. `send(recipient, message)` is written once, on `Notifier`, and no channel redefines
    it. It raises `ValueError` when the recipient or the message is empty; otherwise it
    appends `(channel, recipient, body)` to the outbox, adds one to `sent_count`, and

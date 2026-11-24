@@ -12,9 +12,9 @@ for the error the team wants raised instead.
 ## Requirements
 
 1. `InvalidBalanceError` is a `ValueError`.
-2. A balance is checked every time it is assigned — by outside code, by the
-   constructor, and by `deposit` and `withdraw` alike — while `account.balance` keeps
-   reading and assigning like an ordinary attribute.
+2. `balance` is a property, so a balance is checked every time it is assigned — by
+   outside code, by the constructor, and by `deposit` and `withdraw` alike — while
+   `account.balance` keeps reading and assigning like an ordinary attribute.
    - A negative value raises `InvalidBalanceError` with the message
      `balance cannot be negative: -5`.
    - A value that is not an integer raises `InvalidBalanceError` with the message

@@ -103,9 +103,12 @@ jobs:
                   && guard_exit=0 || guard_exit=$?
               fi
 
-              if ! ran "$scored_exit" || ! ran "$guard_exit"; then
+              if ! ran "$scored_exit"; then
                 result="error"
-                reason="pytest could not run it (exit ${scored_exit}/${guard_exit}) — 2 is usually a syntax or import error in that folder, 124 means it ran past the 2-minute limit"
+                reason="pytest could not run its scored tests (exit ${scored_exit}) — 2 is usually a syntax or import error in that folder, 124 means it ran past the 2-minute limit"
+              elif ! ran "$guard_exit"; then
+                result="error"
+                reason="pytest could not run its existing-behavior tests (exit ${guard_exit}) — 2 is usually a syntax or import error in that folder, 124 means it ran past the 2-minute limit"
               elif [ ! -e "$scored_report" ] || { [ "$guards" -gt 0 ] && [ ! -e "$guard_report" ]; }; then
                 result="error"
                 reason="pytest wrote no report for it"

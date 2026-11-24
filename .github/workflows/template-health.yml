@@ -128,9 +128,11 @@ jobs:
             rm -rf "$reports"
             mkdir -p "$reports"
 
+            echo "::group::${category} — scored run"
             ( cd "${GITHUB_WORKSPACE}/${dir}" && python -m pytest -m "not guard" \
-                --junitxml="${reports}/scored.xml" < /dev/null > /dev/null 2>&1 ) \
+                --junitxml="${reports}/scored.xml" < /dev/null ) \
               && scored_exit=0 || scored_exit=$?
+            echo "::endgroup::"
 
             # Exit 1 is the only healthy answer: tests ran and failed. 0 means
             # something passed everything, 2 means the problem does not import.
@@ -160,9 +162,11 @@ jobs:
             fi
 
             if [ "$guards" -gt 0 ]; then
+              echo "::group::${category} — guard run"
               ( cd "${GITHUB_WORKSPACE}/${dir}" && python -m pytest -m guard \
-                  --junitxml="${reports}/guard.xml" < /dev/null > /dev/null 2>&1 ) \
+                  --junitxml="${reports}/guard.xml" < /dev/null ) \
                 && guard_exit=0 || guard_exit=$?
+              echo "::endgroup::"
 
               # Read the report only after a clean exit: under `bash -e` a sed on a
               # report that was never written would end the step mid-loop.
