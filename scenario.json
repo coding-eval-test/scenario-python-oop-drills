@@ -1,0 +1,77 @@
+{
+  "scenario": "python-oop-drills",
+  "name": "Python OOP & Exceptions",
+  "templateRepo": "coding-eval-test/scenario-python-oop-drills",
+  "projectPath": "problems",
+  "docsAllowList": [
+    "Account",
+    "AccountNotFoundError",
+    "Cart",
+    "EmailNotifier",
+    "EmailSender",
+    "GatewayError",
+    "InsufficientFundsError",
+    "InvalidAmountError",
+    "InvalidBalanceError",
+    "Money",
+    "Notifier",
+    "PaymentError",
+    "PaymentProcessor",
+    "Registry",
+    "Settings",
+    "SmsNotifier",
+    "UrgentEmailNotifier",
+    "apply_overrides",
+    "attach_method",
+    "charge",
+    "deposit",
+    "patch_class",
+    "read_setting",
+    "register",
+    "send",
+    "summary",
+    "withdraw"
+  ],
+  "categories": [
+    {
+      "category": "P1",
+      "points": 20,
+      "label": "P1 — Custom exception hierarchy",
+      "path": "problems/p1_custom_exceptions",
+      "tests": 9,
+      "guards": 4
+    },
+    {
+      "category": "P2",
+      "points": 20,
+      "label": "P2 — Inheritance and abstract bases",
+      "path": "problems/p2_inheritance",
+      "tests": 10,
+      "guards": 3
+    },
+    {
+      "category": "P3",
+      "points": 20,
+      "label": "P3 — Data-model methods",
+      "path": "problems/p3_data_model",
+      "tests": 10,
+      "guards": 4
+    },
+    {
+      "category": "P4",
+      "points": 20,
+      "label": "P4 — Runtime object manipulation",
+      "path": "problems/p4_runtime_objects",
+      "tests": 10,
+      "guards": 4
+    },
+    {
+      "category": "P5",
+      "points": 20,
+      "label": "P5 — Properties and validation",
+      "path": "problems/p5_properties",
+      "tests": 9,
+      "guards": 4
+    }
+  ]
+}
