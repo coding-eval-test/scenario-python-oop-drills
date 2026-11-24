@@ -89,6 +89,16 @@ def test_registry_registers_and_creates_by_name():
     assert created.name == "dana"
     assert registry.names() == ["greeter"]
 
+    @registry.register("crate")
+    class Crate:
+        def __init__(self, label, size="small"):
+            self.label = label
+            self.size = size
+
+    crate = registry.create("crate", "apples", size="large")
+    assert (crate.label, crate.size) == ("apples", "large")
+    assert registry.names() == ["crate", "greeter"]
+
 
 def test_registry_rejects_unknown_and_duplicate_names():
     registry = Registry()
